@@ -1000,14 +1000,29 @@ async function loadAll(){
 
 async function autoImportNotionSeed(){
   const results = await Promise.allSettled(
-    NOTION_IMPORT_SEED.map(seed=>{
+    NOTION_IMPORT_SEED.map(async seed=>{
       const id = 'seed_' + hash(seed.name);
-      return flowersCol.doc(id).set({
-        name: seed.name,
-        grade: seed.grade,
-        emoji: seed.emoji,
-        photo: seed.photo
-      }, { merge: true });
+      const ref = flowersCol.doc(id);
+      const snap = await ref.get();
+      if(!snap.exists){
+        // First time seeing this flower: create it fully, including its seed photo.
+        return ref.set({
+          name: seed.name,
+          grade: seed.grade,
+          emoji: seed.emoji,
+          photo: seed.photo,
+          collectors: []
+        });
+      }else{
+        // Already exists: only refresh name/grade/emoji.
+        // Never touch 'photo' here — a guild member may have uploaded their own photo,
+        // and we must not reset it back to the original seed photo (or null) on every load.
+        return ref.set({
+          name: seed.name,
+          grade: seed.grade,
+          emoji: seed.emoji
+        }, { merge: true });
+      }
     })
   );
   const failed = results.filter(r => r.status === 'rejected');
