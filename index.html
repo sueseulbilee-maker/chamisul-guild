@@ -548,7 +548,6 @@ body{
       <span>나는</span>
       <span class="tag" id="my-name-tag">이름 없음</span>
       <button id="edit-name-btn" type="button">이름 설정</button>
-      <button id="copy-link-btn" type="button">내 링크 복사</button>
       <span style="opacity:0.3;">|</span>
       <span id="admin-status" class="hidden" style="color: var(--gold); font-weight:700; font-size:12px;">관리자 모드</span>
       <button id="admin-toggle-btn" type="button">관리자 모드</button>
@@ -558,8 +557,9 @@ body{
 
   <div class="filter-row">
     <div class="grade-tabs" id="grade-tabs"></div>
+    <button class="grade-tab" id="my-flowers-toggle" type="button">🌷 내 보유 꽃만</button>
     <div class="search-box">
-      <input type="text" id="search-input" placeholder="꽃 이름으로 검색...">
+      <input type="text" id="search-input" placeholder="꽃 이름 또는 길드원 이름으로 검색...">
     </div>
   </div>
 
@@ -845,6 +845,7 @@ let myName = null;
 let pendingAction = null; // function to run after name is set
 let currentGrade = 'ALL';
 let searchTerm = '';
+let myFlowersOnly = false;
 let selectedPhoto = null; // dataURL string or null
 let isAdmin = false;
 let editingFlowerId = null;
@@ -879,6 +880,25 @@ buildGradeTabs();
 searchInput.addEventListener('input', ()=>{
   searchTerm = searchInput.value.trim();
   render();
+});
+
+const myFlowersToggleBtn = document.getElementById('my-flowers-toggle');
+function updateMyFlowersToggleUI(){
+  myFlowersToggleBtn.classList.toggle('active', myFlowersOnly);
+  myFlowersToggleBtn.style.background = myFlowersOnly ? 'var(--rose)' : '';
+}
+myFlowersToggleBtn.addEventListener('click', ()=>{
+  if(!myFlowersOnly){
+    ensureName(()=>{
+      myFlowersOnly = true;
+      updateMyFlowersToggleUI();
+      render();
+    });
+  }else{
+    myFlowersOnly = false;
+    updateMyFlowersToggleUI();
+    render();
+  }
 });
 
 function escapeHtml(str){
@@ -943,7 +963,6 @@ async function loadAll(){
   }
 
   myNameTag.textContent = myName || '이름 없음';
-  updateMyLink();
   await autoImportNotionSeed();
   startRealtimeSync();
 }
@@ -987,12 +1006,20 @@ function render(){
   const filtered = catalog.filter(f=>{
     const grade = (!f.grade || f.grade === 'N' || f.grade === 'R') ? 'SR' : f.grade;
     const gradeOk = currentGrade === 'ALL' || grade === currentGrade;
-    const searchOk = !searchTerm || f.name.toLowerCase().includes(searchTerm.toLowerCase());
-    return gradeOk && searchOk;
+    const collectors = ownership[f.id] || [];
+    const term = searchTerm.toLowerCase();
+    const searchOk = !term
+      || f.name.toLowerCase().includes(term)
+      || collectors.some(n => n.toLowerCase().includes(term));
+    const mineOk = !myFlowersOnly || (myName && collectors.includes(myName));
+    return gradeOk && searchOk && mineOk;
   });
 
   if(filtered.length === 0){
-    grid.innerHTML = '<div class="empty"><b>조건에 맞는 꽃이 없어요</b>등급이나 검색어를 바꿔보세요.</div>';
+    const emptyMsg = myFlowersOnly
+      ? '<div class="empty"><b>아직 등록한 꽃이 없어요</b>꽃 카드에서 "나도 있어요 +"를 눌러 등록해보세요.</div>'
+      : '<div class="empty"><b>조건에 맞는 꽃이 없어요</b>등급이나 검색어를 바꿔보세요.</div>';
+    grid.innerHTML = emptyMsg;
     return;
   }
 
@@ -1353,32 +1380,8 @@ document.getElementById('save-name-btn').addEventListener('click', async ()=>{
   myNameTag.textContent = myName;
   nameOverlay.classList.add('hidden');
   await saveMyName(myName);
-  updateMyLink();
   render();
   if(pendingAction){ const a = pendingAction; pendingAction = null; a(); }
-});
-
-function updateMyLink(){
-  if(!myName) return;
-  try{
-    const url = new URL(window.location.href);
-    url.searchParams.set('name', myName);
-    window.history.replaceState(null, '', url.toString());
-  }catch(e){ /* ignore if URL API unavailable */ }
-}
-
-document.getElementById('copy-link-btn').addEventListener('click', async ()=>{
-  if(!myName){
-    alert('먼저 이름을 설정해주세요. 이름이 담긴 나만의 링크를 만들어드려요.');
-    return;
-  }
-  updateMyLink();
-  try{
-    await navigator.clipboard.writeText(window.location.href);
-    alert('내 이름이 담긴 링크가 복사됐어요! 이 링크를 즐겨찾기(북마크)에 저장해두면, 다음에 들어올 때 이름을 다시 입력하지 않아도 돼요.');
-  }catch(e){
-    alert('링크 복사에 실패했어요. 주소창의 URL을 직접 복사해서 즐겨찾기에 저장해주세요:\n' + window.location.href);
-  }
 });
 
 /* ---- Admin mode ---- */
