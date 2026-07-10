@@ -364,6 +364,21 @@ body{
   transition: all .15s ease;
 }
 .claim-btn:hover{ background: var(--sage); color: white; }
+.bulk-add-btn{
+  width: 100%;
+  margin-top: 8px;
+  font-family:'Inter', sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1.5px dashed var(--gold);
+  background: rgba(201,154,62,0.08);
+  color: var(--gold);
+  transition: all .15s ease;
+}
+.bulk-add-btn:hover{ background: var(--gold); color: var(--forest-deep); }
 .claim-btn.mine{
   background: var(--sage);
   color: white;
@@ -425,6 +440,22 @@ body{
   color: var(--ink);
 }
 .modal input[type=text]:focus{
+  outline: none;
+  border-color: var(--sage);
+}
+.modal textarea{
+  width: 100%;
+  font-family:'Inter', sans-serif;
+  font-size: 15px;
+  padding: 11px 12px;
+  border: 1.5px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 18px;
+  background: white;
+  color: var(--ink);
+  resize: vertical;
+}
+.modal textarea:focus{
   outline: none;
   border-color: var(--sage);
 }
@@ -564,6 +595,7 @@ body{
 .flower-name{ font-size: 20px !important; }
 .count-line{ font-size: 14px !important; }
 .claim-btn{ font-size: 16px !important; padding: 12px !important; }
+.bulk-add-btn{ font-size: 15px !important; padding: 12px !important; }
 </style>
 </head>
 <body>
@@ -660,6 +692,21 @@ body{
     <div class="modal-actions">
       <button class="btn btn-ghost" id="cancel-admin-btn" type="button" style="color:var(--ink-soft); border-color:var(--line);">취소</button>
       <button class="btn btn-primary" id="submit-admin-btn" type="button">확인</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk Add Collectors Modal (admin only) -->
+<div class="overlay hidden" id="bulk-collectors-overlay">
+  <div class="modal">
+    <h3>길드원 일괄 추가</h3>
+    <p class="sub" id="bulk-collectors-sub">이 꽃에 등록할 길드원 이름을 쉼표(,) 또는 줄바꿈으로 구분해서 입력해주세요.</p>
+    <label for="bulk-collectors-input">이름 목록</label>
+    <textarea id="bulk-collectors-input" placeholder="예: 우유누나, 초록달팽이, 별빛요정" rows="5"></textarea>
+    <div class="error-msg hidden" id="bulk-collectors-error"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="cancel-bulk-collectors-btn" type="button" style="color:var(--ink-soft); border-color:var(--line);">취소</button>
+      <button class="btn btn-primary" id="save-bulk-collectors-btn" type="button">추가하기</button>
     </div>
   </div>
 </div>
@@ -1110,6 +1157,7 @@ function render(){
       <button class="claim-btn ${isMine ? 'mine' : ''}" data-id="${f.id}">
         ${isMine ? '내 꽃이에요 ✓ (취소하려면 클릭)' : '나도 있어요 +'}
       </button>
+      ${isAdmin ? `<button class="bulk-add-btn" data-id="${f.id}">👥 인원 일괄 추가</button>` : ''}
     `;
     grid.appendChild(card);
   });
@@ -1128,6 +1176,9 @@ function render(){
   });
   grid.querySelectorAll('.tag-remove').forEach(btn=>{
     btn.addEventListener('click', () => onRemoveCollector(btn.dataset.id, btn.dataset.name));
+  });
+  grid.querySelectorAll('.bulk-add-btn').forEach(btn=>{
+    btn.addEventListener('click', () => onOpenBulkAddCollectors(btn.dataset.id));
   });
 }
 
@@ -1395,6 +1446,52 @@ async function onRemoveCollector(flowerId, name){
     alert('삭제에 실패했어요. 다시 시도해주세요.');
   }
 }
+
+/* ---- Bulk add collectors (admin only) ---- */
+let bulkCollectorsFlowerId = null;
+const bulkCollectorsOverlay = document.getElementById('bulk-collectors-overlay');
+const bulkCollectorsInput = document.getElementById('bulk-collectors-input');
+const bulkCollectorsError = document.getElementById('bulk-collectors-error');
+const bulkCollectorsSub = document.getElementById('bulk-collectors-sub');
+
+function onOpenBulkAddCollectors(flowerId){
+  if(!isAdmin) return;
+  const f = catalog.find(x=>x.id===flowerId);
+  if(!f) return;
+  bulkCollectorsFlowerId = flowerId;
+  bulkCollectorsSub.textContent = `"${f.name}"에 등록할 길드원 이름을 쉼표(,) 또는 줄바꿈으로 구분해서 입력해주세요.`;
+  bulkCollectorsInput.value = '';
+  bulkCollectorsError.classList.add('hidden');
+  bulkCollectorsOverlay.classList.remove('hidden');
+  bulkCollectorsInput.focus();
+}
+document.getElementById('cancel-bulk-collectors-btn').addEventListener('click', ()=>{
+  bulkCollectorsOverlay.classList.add('hidden');
+  bulkCollectorsFlowerId = null;
+});
+document.getElementById('save-bulk-collectors-btn').addEventListener('click', async ()=>{
+  if(!bulkCollectorsFlowerId) return;
+  const raw = bulkCollectorsInput.value;
+  const names = [...new Set(
+    raw.split(/[,\n]/).map(s=>s.trim()).filter(s=>s.length > 0)
+  )];
+  if(names.length === 0){
+    bulkCollectorsError.textContent = '이름을 한 개 이상 입력해주세요.';
+    bulkCollectorsError.classList.remove('hidden');
+    return;
+  }
+  try{
+    await flowersCol.doc(bulkCollectorsFlowerId).update({
+      collectors: firebase.firestore.FieldValue.arrayUnion(...names)
+    });
+    bulkCollectorsOverlay.classList.add('hidden');
+    bulkCollectorsFlowerId = null;
+  }catch(e){
+    console.error('bulk add collectors failed', e);
+    bulkCollectorsError.textContent = '저장에 실패했어요. 다시 시도해주세요.';
+    bulkCollectorsError.classList.remove('hidden');
+  }
+});
 
 
 
