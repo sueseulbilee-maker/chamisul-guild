@@ -495,10 +495,41 @@ body{
   margin-top: 6px;
 }
 
+@media (max-width: 640px){
+  .wrap{ padding: 24px 16px 60px; }
+  .hero h1{ font-size: 28px; }
+  .eyebrow{ font-size: 10px; letter-spacing: 2px; }
+  .hero p{ font-size: 14px; padding: 0 8px; }
+  .press-row{ font-size: 22px; }
+
+  .toolbar{ flex-direction: column; align-items: stretch; padding: 12px 14px; }
+  .me{ flex-wrap: wrap; row-gap: 8px; }
+
+  .filter-row{ flex-direction: column; align-items: stretch; }
+  .grade-tabs{ justify-content: center; }
+  .grade-tab{ flex: 1; text-align: center; padding: 8px 6px; }
+
+  .grid{
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    max-width: 100%;
+    margin: 0;
+  }
+  .card{ padding: 18px 12px 14px; }
+  .emoji-mount{ font-size: 40px; }
+  .flower-name{ font-size: 16px; }
+  .count-line{ font-size: 10px; }
+  .collector-tag{ font-size: 11px; padding: 3px 8px; }
+  .claim-btn{ font-size: 11px; padding: 8px; }
+  .photo-mount{ height: auto; }
+
+  .modal{ max-width: 100%; padding: 24px 20px; }
+  .emoji-pick{ grid-template-columns: repeat(5, 1fr); }
+  .grade-select button{ font-size: 11px; padding: 10px 0; }
+}
+
 @media (max-width: 480px){
-  .hero h1{ font-size: 32px; }
-  .grid{ grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap:14px; }
-  .toolbar{ flex-direction: column; align-items: stretch; }
+  .hero h1{ font-size: 26px; }
 }
 </style>
 </head>
@@ -605,17 +636,28 @@ body{
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
 <script>
-const firebaseConfig = {
-  apiKey: "AIzaSyDue4Qd8OT-_gVVARlboM2f7v82YEYJDgA",
-  authDomain: "chamisul-guild.firebaseapp.com",
-  projectId: "chamisul-guild",
-  storageBucket: "chamisul-guild.firebasestorage.app",
-  messagingSenderId: "461673771866",
-  appId: "1:461673771866:web:f8f3b7a0cd9ef1f8cff963"
-};
-firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
-const flowersCol = db.collection('flowers');
+let db = null;
+let flowersCol = null;
+let firebaseInitError = null;
+try{
+  if(typeof firebase === 'undefined'){
+    throw new Error('Firebase SDK 스크립트를 불러오지 못했어요 (firebase-app-compat.js / firebase-firestore-compat.js). index.html에 해당 <script> 태그가 포함되어 있는지, 최신 파일이 업로드됐는지, 네트워크가 gstatic.com에 접근 가능한지 확인해주세요.');
+  }
+  const firebaseConfig = {
+    apiKey: "AIzaSyDue4Qd8OT-_gVVARlboM2f7v82YEYJDgA",
+    authDomain: "chamisul-guild.firebaseapp.com",
+    projectId: "chamisul-guild",
+    storageBucket: "chamisul-guild.firebasestorage.app",
+    messagingSenderId: "461673771866",
+    appId: "1:461673771866:web:f8f3b7a0cd9ef1f8cff963"
+  };
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.firestore();
+  flowersCol = db.collection('flowers');
+}catch(e){
+  firebaseInitError = e;
+  console.error('Firebase init failed:', e);
+}
 </script>
 
 <script>
@@ -880,6 +922,14 @@ function startRealtimeSync(){
 }
 
 async function loadAll(){
+  if(!flowersCol){
+    document.getElementById('grid').innerHTML =
+      '<div class="empty"><b>Firebase 연결에 실패했어요</b>' +
+      (firebaseInitError ? escapeHtml(firebaseInitError.message) : '알 수 없는 오류') +
+      '</div>';
+    return;
+  }
+
   const urlParams = new URLSearchParams(window.location.search);
   const urlName = urlParams.get('name');
 
