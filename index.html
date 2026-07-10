@@ -1104,7 +1104,7 @@ function render(){
       <div class="collectors">
         ${names.length === 0
           ? '<span class="no-collectors">아직 아무도 없어요</span>'
-          : names.map((n,i) => `<span class="collector-tag" style="background:${TAG_COLORS[hash(n+i)%TAG_COLORS.length]}; --tr:${((hash(n)%5)-2)*0.6}deg">${escapeHtml(n)}${isAdmin ? `<span class="tag-remove" data-id="${f.id}" data-name="${escapeHtml(n)}">×</span>` : ''}</span>`).join('')
+          : names.map((n,i) => `<span class="collector-tag" style="background:${TAG_COLORS[hash(n)%TAG_COLORS.length]}; --tr:${((hash(n)%5)-2)*0.6}deg">${escapeHtml(n)}${isAdmin ? `<span class="tag-remove" data-id="${f.id}" data-name="${escapeHtml(n)}">×</span>` : ''}</span>`).join('')
         }
       </div>
       <button class="claim-btn ${isMine ? 'mine' : ''}" data-id="${f.id}">
