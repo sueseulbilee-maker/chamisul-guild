@@ -618,6 +618,7 @@ body{
       <button id="admin-toggle-btn" type="button">관리자 모드</button>
     </div>
     <button class="btn btn-primary" id="add-flower-btn" type="button">+ 꽃 종류 추가</button>
+    <button class="btn btn-ghost hidden" id="remove-member-btn" type="button">🚪 탈퇴 길드원 삭제</button>
   </div>
 
   <div class="filter-row">
@@ -707,6 +708,21 @@ body{
     <div class="modal-actions">
       <button class="btn btn-ghost" id="cancel-bulk-collectors-btn" type="button" style="color:var(--ink-soft); border-color:var(--line);">취소</button>
       <button class="btn btn-primary" id="save-bulk-collectors-btn" type="button">추가하기</button>
+    </div>
+  </div>
+</div>
+
+<!-- Remove Departed Member Modal (admin only) -->
+<div class="overlay hidden" id="remove-member-overlay">
+  <div class="modal">
+    <h3>탈퇴 길드원 삭제</h3>
+    <p class="sub">입력한 이름을 <b>모든 꽃</b>의 수집 명단에서 한 번에 삭제해요. 쉼표(,) 또는 줄바꿈으로 여러 명을 한 번에 입력할 수 있어요. 이 작업은 되돌릴 수 없어요.</p>
+    <label for="remove-member-input">삭제할 이름 목록</label>
+    <textarea id="remove-member-input" placeholder="예: 우유누나, 초록달팽이" rows="5"></textarea>
+    <div class="error-msg hidden" id="remove-member-error"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="cancel-remove-member-btn" type="button" style="color:var(--ink-soft); border-color:var(--line);">취소</button>
+      <button class="btn btn-primary" id="confirm-remove-member-btn" type="button" style="background: var(--rose-deep); color:white;">삭제하기</button>
     </div>
   </div>
 </div>
@@ -1493,6 +1509,65 @@ document.getElementById('save-bulk-collectors-btn').addEventListener('click', as
   }
 });
 
+/* ---- Remove departed member from every flower (admin only) ---- */
+const removeMemberOverlay = document.getElementById('remove-member-overlay');
+const removeMemberInput = document.getElementById('remove-member-input');
+const removeMemberError = document.getElementById('remove-member-error');
+
+removeMemberBtn.addEventListener('click', ()=>{
+  if(!isAdmin) return;
+  removeMemberInput.value = '';
+  removeMemberError.classList.add('hidden');
+  removeMemberOverlay.classList.remove('hidden');
+  removeMemberInput.focus();
+});
+document.getElementById('cancel-remove-member-btn').addEventListener('click', ()=>{
+  removeMemberOverlay.classList.add('hidden');
+});
+document.getElementById('confirm-remove-member-btn').addEventListener('click', async ()=>{
+  if(!isAdmin) return;
+  const raw = removeMemberInput.value;
+  const namesToRemove = [...new Set(
+    raw.split(/[,\n]/).map(s=>s.trim()).filter(s=>s.length > 0)
+  )];
+  if(namesToRemove.length === 0){
+    removeMemberError.textContent = '이름을 한 개 이상 입력해주세요.';
+    removeMemberError.classList.remove('hidden');
+    return;
+  }
+
+  // Find every flower where any of these names currently appear.
+  const affected = catalog.filter(f => {
+    const collectors = ownership[f.id] || [];
+    return namesToRemove.some(n => collectors.includes(n));
+  });
+
+  if(affected.length === 0){
+    removeMemberError.textContent = '입력한 이름이 등록된 꽃이 없어요.';
+    removeMemberError.classList.remove('hidden');
+    return;
+  }
+
+  const nameList = namesToRemove.join(', ');
+  if(!confirm(`"${nameList}" 님을(를) ${affected.length}개 꽃에서 삭제할까요? 되돌릴 수 없어요.`)) return;
+
+  try{
+    const batch = db.batch();
+    affected.forEach(f=>{
+      batch.update(flowersCol.doc(f.id), {
+        collectors: firebase.firestore.FieldValue.arrayRemove(...namesToRemove)
+      });
+    });
+    await batch.commit();
+    removeMemberOverlay.classList.add('hidden');
+    alert(`${affected.length}개 꽃에서 삭제했어요.`);
+  }catch(e){
+    console.error('remove departed member failed', e);
+    removeMemberError.textContent = '삭제에 실패했어요. 다시 시도해주세요.';
+    removeMemberError.classList.remove('hidden');
+  }
+});
+
 
 
 /* ---- Name modal ---- */
@@ -1534,11 +1609,13 @@ const adminOverlay = document.getElementById('admin-overlay');
 const adminPasswordInput = document.getElementById('admin-password-input');
 const adminError = document.getElementById('admin-error');
 const adminToggleBtn = document.getElementById('admin-toggle-btn');
+const removeMemberBtn = document.getElementById('remove-member-btn');
 const adminStatusEl = document.getElementById('admin-status');
 
 function updateAdminUI(){
   adminStatusEl.classList.toggle('hidden', !isAdmin);
   adminToggleBtn.textContent = isAdmin ? '관리자 모드 종료' : '관리자 모드';
+  removeMemberBtn.classList.toggle('hidden', !isAdmin);
 }
 
 adminToggleBtn.addEventListener('click', ()=>{
