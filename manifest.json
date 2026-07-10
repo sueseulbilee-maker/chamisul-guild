@@ -1,0 +1,15 @@
+{
+  "name": "참이슬 길드 꽃 도감",
+  "short_name": "꽃 도감",
+  "description": "참이슬 길드원들이 보유하고 있는 꽃을 기록하는 길드 도감",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#223226",
+  "theme_color": "#223226",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
