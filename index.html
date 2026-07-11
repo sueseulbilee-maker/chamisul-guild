@@ -1043,7 +1043,19 @@ function escapeHtml(str){
 // name matching (search, duplicate detection, "same person" checks), so we
 // always normalize to NFC before comparing or storing any name.
 function normName(str){
-  return (str || '').normalize('NFC').trim();
+  return (str || '')
+    .normalize('NFC')
+    .replace(/[\u00A0\u2007\u202F]/g, ' ')        // non-breaking space variants -> regular space
+    .replace(/[\u200B\u200C\u200D\uFEFF]/g, '')    // zero-width chars -> strip entirely
+    .replace(/\s+/g, ' ')                          // collapse any run of whitespace to one space
+    .trim();
+}
+
+// Ultra-aggressive key for the duplicate finder: strips ALL whitespace so that
+// names differing only by spacing/invisible characters are still caught, even
+// if they slip past normName() for some reason.
+function looseKey(str){
+  return normName(str).replace(/\s+/g, '').toLowerCase();
 }
 
 function hash(str){
@@ -1162,9 +1174,11 @@ function render(){
     const gradeOk = currentGrade === 'ALL' || grade === currentGrade;
     const collectors = ownership[f.id] || [];
     const term = normName(searchTerm).toLowerCase();
+    const termLoose = looseKey(searchTerm);
     const searchOk = !term
       || normName(f.name).toLowerCase().includes(term)
-      || collectors.some(n => normName(n).toLowerCase().includes(term));
+      || looseKey(f.name).includes(termLoose)
+      || collectors.some(n => normName(n).toLowerCase().includes(term) || looseKey(n).includes(termLoose));
     const mineOk = !myFlowersOnly || (myName && collectors.map(normName).includes(normName(myName)));
     return gradeOk && searchOk && mineOk;
   });
@@ -1660,11 +1674,15 @@ findDuplicatesBtn.addEventListener('click', ()=>{
   if(!isAdmin) return;
   const groups = {};
   catalog.forEach(f=>{
-    const key = normName(f.name).toLowerCase();
+    const key = looseKey(f.name);
     if(!groups[key]) groups[key] = [];
     groups[key].push(f);
   });
   const dupGroups = Object.values(groups).filter(g => g.length > 1);
+
+  function toCodeDump(str){
+    return [...str].map(ch => ch.codePointAt(0).toString(16).toUpperCase().padStart(4,'0')).join(' ');
+  }
 
   if(dupGroups.length === 0){
     duplicatesList.innerHTML = '<p style="color:var(--ink-soft); font-size:14px;">중복된 꽃이 없어요. 👍</p>';
@@ -1673,7 +1691,10 @@ findDuplicatesBtn.addEventListener('click', ()=>{
       const items = group.map(f=>{
         const no = String(catalog.indexOf(f)+1).padStart(3,'0');
         const count = (ownership[f.id] || []).length;
-        return `<div class="dup-group-item">No. ${no} · ${f.grade || 'SR'}등급 · 수집 ${count}명 ${f.photo ? '· 사진 있음' : ''}</div>`;
+        return `<div class="dup-group-item">
+          No. ${no} · ${f.grade || 'SR'}등급 · 수집 ${count}명 ${f.photo ? '· 사진 있음' : ''}<br>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:10px; opacity:0.7;">길이 ${f.name.length}자 · 코드: ${toCodeDump(f.name)}</span>
+        </div>`;
       }).join('');
       return `<div class="dup-group"><div class="dup-group-name">${escapeHtml(group[0].name)} (${group.length}개)</div>${items}</div>`;
     }).join('');
