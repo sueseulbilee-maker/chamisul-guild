@@ -349,6 +349,19 @@ body{
   font-style: italic;
   padding: 4px 2px;
 }
+.collector-more-btn{
+  font-family:'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 3px;
+  border: 1.5px dashed var(--gold);
+  background: rgba(201,154,62,0.1);
+  color: var(--ink);
+  cursor: pointer;
+  transform: rotate(-1deg);
+}
+.collector-more-btn:hover{ background: var(--gold); color: white; }
 
 .claim-btn{
   width: 100%;
@@ -612,6 +625,7 @@ body{
 .flower-name{ font-size: 20px !important; }
 .count-line{ font-size: 14px !important; }
 .claim-btn{ font-size: 16px !important; padding: 12px !important; }
+.collector-more-btn{ font-size: 15px !important; padding: 6px 12px !important; }
 .bulk-add-btn{ font-size: 15px !important; padding: 12px !important; }
 </style>
 </head>
@@ -797,6 +811,17 @@ body{
   </div>
 </div>
 
+<!-- Full Roster Modal -->
+<div class="overlay hidden" id="full-roster-overlay">
+  <div class="modal" style="max-width: 440px;">
+    <h3 id="full-roster-title">전체 명단</h3>
+    <div id="full-roster-list" class="collectors" style="max-height: 360px; overflow-y: auto; margin-bottom: 18px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="close-full-roster-btn" type="button">닫기</button>
+    </div>
+  </div>
+</div>
+
 <!-- Firebase (Firestore) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -829,6 +854,7 @@ try{
 <script>
 const EMOJI_OPTIONS = ['🌸','🌼','🌻','🌷','🌹','🪷','🌺','💮','🏵️','🌱','🍀','🪻'];
 const TAG_COLORS = ['var(--rose)','var(--sage)','var(--gold)','var(--rose-deep)','var(--sage-deep)'];
+const MAX_VISIBLE_COLLECTORS = 10;
 const GRADES = ['SR','SSR','UR'];
 const GRADE_COLORS = { SR:'#8A5FA8', SSR:'#C99A3E', UR:'#B04C6E' };
 
@@ -1013,6 +1039,7 @@ let currentGrade = 'ALL';
 let searchTerm = '';
 let myFlowersOnly = false;
 let selectedPhoto = null; // dataURL string or null
+let photoTouched = false; // true only if the admin explicitly changed the photo in this modal session
 let isAdmin = false;
 let editingFlowerId = null;
 const ADMIN_PASSWORD = '1234';
@@ -1292,7 +1319,8 @@ function render(){
       <div class="collectors">
         ${names.length === 0
           ? '<span class="no-collectors">아직 아무도 없어요</span>'
-          : names.map((n,i) => `<span class="collector-tag" style="background:${TAG_COLORS[hash(n)%TAG_COLORS.length]}; --tr:${((hash(n)%5)-2)*0.6}deg">${escapeHtml(n)}${isAdmin ? `<span class="tag-remove" data-id="${f.id}" data-name="${escapeHtml(n)}">×</span>` : ''}</span>`).join('')
+          : names.slice(0, MAX_VISIBLE_COLLECTORS).map((n,i) => `<span class="collector-tag" style="background:${TAG_COLORS[hash(n)%TAG_COLORS.length]}; --tr:${((hash(n)%5)-2)*0.6}deg">${escapeHtml(n)}${isAdmin ? `<span class="tag-remove" data-id="${f.id}" data-name="${escapeHtml(n)}">×</span>` : ''}</span>`).join('')
+            + (names.length > MAX_VISIBLE_COLLECTORS ? `<button class="collector-more-btn" data-id="${f.id}">+${names.length - MAX_VISIBLE_COLLECTORS}명 더보기</button>` : '')
         }
       </div>
       <button class="claim-btn ${isMine ? 'mine' : ''}" data-id="${f.id}">
@@ -1321,6 +1349,13 @@ function render(){
   grid.querySelectorAll('.bulk-add-btn').forEach(btn=>{
     btn.addEventListener('click', () => onOpenBulkAddCollectors(btn.dataset.id));
   });
+  grid.querySelectorAll('.collector-more-btn').forEach(btn=>{
+    btn.addEventListener('click', () => onShowFullRoster(btn.dataset.id));
+  });
+
+  if(typeof renderFullRosterModal === 'function'){
+    renderFullRosterModal();
+  }
 }
 
 function ensureName(action){
@@ -1472,6 +1507,7 @@ photoInput.addEventListener('change', ()=>{
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
       selectedPhoto = canvas.toDataURL('image/jpeg', 0.7);
+      photoTouched = true;
       photoPreview.src = selectedPhoto;
       photoPreviewWrap.classList.remove('hidden');
     };
@@ -1480,7 +1516,10 @@ photoInput.addEventListener('change', ()=>{
   reader.readAsDataURL(file);
 });
 
-photoRemoveBtn.addEventListener('click', resetPhotoField);
+photoRemoveBtn.addEventListener('click', ()=>{
+  resetPhotoField();
+  photoTouched = true;
+});
 
 document.getElementById('add-flower-btn').addEventListener('click', ()=>{
   editingFlowerId = null;
@@ -1497,6 +1536,7 @@ document.getElementById('add-flower-btn').addEventListener('click', ()=>{
     b.style.background = i===0 ? GRADE_COLORS[GRADES[0]] : 'white';
   });
   resetPhotoField();
+  photoTouched = false;
   addFlowerOverlay.classList.remove('hidden');
   flowerNameInput.focus();
 });
@@ -1518,9 +1558,15 @@ document.getElementById('save-flower-btn').addEventListener('click', async ()=>{
   }
   try{
     if(editingFlowerId){
-      await flowersCol.doc(editingFlowerId).update({
-        name, emoji: selectedEmoji, grade: selectedGrade, photo: selectedPhoto
-      });
+      const updatePayload = { name, emoji: selectedEmoji, grade: selectedGrade };
+      if(photoTouched){
+        // Only overwrite the photo field if the admin actually changed it in
+        // this session. Otherwise, leave it untouched — another guild member
+        // may have uploaded a photo to this same flower while this modal was
+        // open, and blindly writing our stale local copy would erase it.
+        updatePayload.photo = selectedPhoto;
+      }
+      await flowersCol.doc(editingFlowerId).update(updatePayload);
     }else{
       const id = 'f_' + Date.now() + '_' + Math.floor(Math.random()*100000);
       await flowersCol.doc(id).set({
@@ -1568,10 +1614,46 @@ function onEditFlower(flowerId){
   }else{
     resetPhotoField();
   }
+  photoTouched = false;
 
   addFlowerOverlay.classList.remove('hidden');
   flowerNameInput.focus();
 }
+
+/* ---- Full roster modal (view all collectors when list is long) ---- */
+let fullRosterFlowerId = null;
+const fullRosterOverlay = document.getElementById('full-roster-overlay');
+const fullRosterTitle = document.getElementById('full-roster-title');
+const fullRosterListEl = document.getElementById('full-roster-list');
+
+function renderFullRosterModal(){
+  if(!fullRosterFlowerId) return;
+  if(fullRosterOverlay.classList.contains('hidden')) return;
+  const f = catalog.find(x=>x.id===fullRosterFlowerId);
+  if(!f){
+    fullRosterOverlay.classList.add('hidden');
+    fullRosterFlowerId = null;
+    return;
+  }
+  const names = ownership[f.id] || [];
+  fullRosterTitle.textContent = `"${f.name}" 전체 명단 (${names.length}명)`;
+  fullRosterListEl.innerHTML = names.length === 0
+    ? '<span class="no-collectors">아직 아무도 없어요</span>'
+    : names.map(n => `<span class="collector-tag" style="background:${TAG_COLORS[hash(n)%TAG_COLORS.length]}">${escapeHtml(n)}${isAdmin ? `<span class="tag-remove" data-id="${f.id}" data-name="${escapeHtml(n)}">×</span>` : ''}</span>`).join('');
+  fullRosterListEl.querySelectorAll('.tag-remove').forEach(btn=>{
+    btn.addEventListener('click', () => onRemoveCollector(btn.dataset.id, btn.dataset.name));
+  });
+}
+
+function onShowFullRoster(flowerId){
+  fullRosterFlowerId = flowerId;
+  fullRosterOverlay.classList.remove('hidden');
+  renderFullRosterModal();
+}
+document.getElementById('close-full-roster-btn').addEventListener('click', ()=>{
+  fullRosterOverlay.classList.add('hidden');
+  fullRosterFlowerId = null;
+});
 
 async function onRemoveCollector(flowerId, name){
   if(!isAdmin) return;
