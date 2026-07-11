@@ -638,6 +638,7 @@ body{
     <button class="btn btn-ghost hidden" id="remove-member-btn" type="button">🚪 탈퇴 길드원 삭제</button>
     <button class="btn btn-ghost hidden" id="find-duplicates-btn" type="button">🔍 중복 꽃 확인</button>
     <button class="btn btn-ghost hidden" id="mass-assign-btn" type="button">📋 전체 일괄 등록</button>
+    <button class="btn btn-ghost hidden" id="assign-by-member-btn" type="button">🙋 한 명당 여러 꽃 등록</button>
   </div>
 
   <div class="filter-row">
@@ -774,6 +775,24 @@ body{
     <div class="modal-actions">
       <button class="btn btn-ghost" id="cancel-mass-assign-btn" type="button" style="color:var(--ink-soft); border-color:var(--line);">취소</button>
       <button class="btn btn-primary" id="save-mass-assign-btn" type="button">일괄 등록하기</button>
+    </div>
+  </div>
+</div>
+
+<!-- Assign By Member Modal (admin only) -->
+<div class="overlay hidden" id="assign-by-member-overlay">
+  <div class="modal" style="max-width: 520px;">
+    <h3>한 명당 여러 꽃 등록</h3>
+    <p class="sub">
+      한 줄에 <b>길드원 이름 - 꽃1, 꽃2, 꽃3</b> 형식으로 입력해주세요. 여러 명을 한 번에 등록하려면 줄을 나눠서 여러 줄 입력하면 돼요.
+    </p>
+    <label for="assign-by-member-input">등록 목록</label>
+    <textarea id="assign-by-member-input" placeholder="우유누나 - 냥이의 즐거운 노래, 별똥별의 향기, 꽃나무 정원" rows="8"></textarea>
+    <div class="error-msg hidden" id="assign-by-member-error"></div>
+    <div id="assign-by-member-result" style="max-height: 200px; overflow-y:auto; margin-bottom: 14px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="cancel-assign-by-member-btn" type="button" style="color:var(--ink-soft); border-color:var(--line);">취소</button>
+      <button class="btn btn-primary" id="save-assign-by-member-btn" type="button">등록하기</button>
     </div>
   </div>
 </div>
@@ -1003,6 +1022,7 @@ const removeMemberBtn = document.getElementById('remove-member-btn');
 const findDuplicatesBtn = document.getElementById('find-duplicates-btn');
 const resyncBtn = document.getElementById('resync-btn');
 const massAssignBtn = document.getElementById('mass-assign-btn');
+const assignByMemberBtn = document.getElementById('assign-by-member-btn');
 const myNameTag = document.getElementById('my-name-tag');
 const gradeTabsEl = document.getElementById('grade-tabs');
 const searchInput = document.getElementById('search-input');
@@ -1140,6 +1160,24 @@ async function loadAll(){
 }
 
 async function autoImportNotionSeed(){
+  // The full sync below costs up to ~340 Firestore ops (170 reads + up to 170
+  // writes). Running that on EVERY page load, for EVERY user, is what was
+  // causing slowness/quota errors when several people used the app at once.
+  // So: check a tiny "have we already done this?" flag first, and skip the
+  // whole expensive sync if nothing has changed since last time.
+  const metaRef = db.collection('meta').doc('seedStatus');
+  const expectedVersion = NOTION_IMPORT_SEED.length;
+
+  try{
+    const metaSnap = await metaRef.get();
+    if(metaSnap.exists && metaSnap.data().version === expectedVersion){
+      return; // already fully synced for this seed set — just 1 read, done.
+    }
+  }catch(e){
+    console.error('seed meta check failed', e);
+    // fall through and attempt the full sync anyway
+  }
+
   const results = await Promise.allSettled(
     NOTION_IMPORT_SEED.map(async seed=>{
       const id = 'seed_' + hash(seed.name);
@@ -1173,6 +1211,15 @@ async function autoImportNotionSeed(){
   if(failed.length === results.length && results.length > 0){
     const gridEl = document.getElementById('grid');
     gridEl.innerHTML = '<div class="empty"><b>꽃 데이터를 불러오지 못했어요</b>Firestore 보안 규칙이 read/write를 허용하는지 확인해주세요. (자세한 오류는 브라우저 개발자 콘솔을 확인해주세요)</div>';
+    return;
+  }
+
+  // Record that this seed set is now fully synced, so future page loads
+  // (by any user) can skip straight past the expensive per-item sync above.
+  try{
+    await metaRef.set({ version: expectedVersion, updatedAt: Date.now() });
+  }catch(e){
+    console.error('seed meta write failed', e);
   }
 }
 
@@ -1841,6 +1888,121 @@ document.getElementById('save-mass-assign-btn').addEventListener('click', async 
   }
 });
 
+/* ---- Assign one member to many flowers at once (admin only) ---- */
+const assignByMemberOverlay = document.getElementById('assign-by-member-overlay');
+const assignByMemberInput = document.getElementById('assign-by-member-input');
+const assignByMemberError = document.getElementById('assign-by-member-error');
+const assignByMemberResult = document.getElementById('assign-by-member-result');
+
+assignByMemberBtn.addEventListener('click', ()=>{
+  if(!isAdmin) return;
+  assignByMemberInput.value = '';
+  assignByMemberError.classList.add('hidden');
+  assignByMemberResult.innerHTML = '';
+  assignByMemberOverlay.classList.remove('hidden');
+  assignByMemberInput.focus();
+});
+document.getElementById('cancel-assign-by-member-btn').addEventListener('click', ()=>{
+  assignByMemberOverlay.classList.add('hidden');
+});
+
+function parseAssignByMemberLine(line){
+  let cleaned = line.replace(/^\s*\d+[.)]\s*/, '').trim();
+  if(!cleaned) return null;
+  let idx = cleaned.indexOf(' - ');
+  let sepLen = 3;
+  if(idx === -1){
+    idx = cleaned.indexOf('-');
+    sepLen = 1;
+  }
+  if(idx === -1) return null;
+  const memberName = normName(cleaned.slice(0, idx));
+  const flowerNamesStr = cleaned.slice(idx + sepLen).trim();
+  if(!memberName || !flowerNamesStr) return null;
+  const flowerNames = [...new Set(
+    flowerNamesStr.split(',').map(s=>s.trim()).filter(s=>s.length > 0)
+  )];
+  return { memberName, flowerNames };
+}
+
+document.getElementById('save-assign-by-member-btn').addEventListener('click', async ()=>{
+  if(!isAdmin) return;
+  assignByMemberError.classList.add('hidden');
+  assignByMemberResult.innerHTML = '';
+
+  const lines = assignByMemberInput.value.split('\n').map(l=>l.trim()).filter(l=>l.length > 0);
+  if(lines.length === 0){
+    assignByMemberError.textContent = '내용을 입력해주세요.';
+    assignByMemberError.classList.remove('hidden');
+    return;
+  }
+
+  // flowerId -> { flower, members: Set }
+  const updatesByFlower = {};
+  const unmatched = [];
+
+  lines.forEach(line=>{
+    const parsed = parseAssignByMemberLine(line);
+    if(!parsed){
+      unmatched.push({ line, reason: '형식을 이해하지 못했어요 (이름 - 꽃1, 꽃2 형식인지 확인해주세요)' });
+      return;
+    }
+    parsed.flowerNames.forEach(flowerName=>{
+      const targetKey = looseKey(flowerName);
+      const f = catalog.find(x => looseKey(x.name) === targetKey);
+      if(!f){
+        unmatched.push({ line: `${parsed.memberName} - ${flowerName}`, reason: `"${flowerName}"라는 꽃을 도감에서 찾지 못했어요` });
+        return;
+      }
+      if(!updatesByFlower[f.id]) updatesByFlower[f.id] = { flower: f, members: new Set() };
+      updatesByFlower[f.id].members.add(parsed.memberName);
+    });
+  });
+
+  const updates = Object.values(updatesByFlower);
+
+  if(updates.length === 0){
+    assignByMemberError.textContent = '일치하는 꽃을 하나도 찾지 못했어요.';
+    assignByMemberError.classList.remove('hidden');
+    assignByMemberResult.innerHTML = unmatched.map(u=>
+      `<div class="dup-group-item" style="color:var(--rose-deep);">❌ ${escapeHtml(u.line)}<br><span style="font-size:11px;">${escapeHtml(u.reason)}</span></div>`
+    ).join('');
+    return;
+  }
+
+  const summaryLines = updates.map(u => `"${u.flower.name}"에 ${u.members.size}명`).join(', ');
+  if(!confirm(`${updates.length}개 꽃에 인원을 등록할까요?\n${summaryLines}`)) return;
+
+  try{
+    const batch = db.batch();
+    updates.forEach(u=>{
+      batch.update(flowersCol.doc(u.flower.id), {
+        collectors: firebase.firestore.FieldValue.arrayUnion(...u.members)
+      });
+    });
+    await batch.commit();
+
+    let resultHtml = updates.map(u =>
+      `<div class="dup-group-item" style="color:var(--sage-deep);">✅ ${escapeHtml(u.flower.name)} — ${[...u.members].map(escapeHtml).join(', ')}</div>`
+    ).join('');
+    if(unmatched.length > 0){
+      resultHtml += unmatched.map(u=>
+        `<div class="dup-group-item" style="color:var(--rose-deep);">❌ ${escapeHtml(u.line)}<br><span style="font-size:11px;">${escapeHtml(u.reason)}</span></div>`
+      ).join('');
+    }
+    assignByMemberResult.innerHTML = resultHtml;
+
+    if(unmatched.length === 0){
+      alert(`${updates.length}개 꽃에 등록 완료했어요.`);
+      assignByMemberOverlay.classList.add('hidden');
+    }
+  }catch(e){
+    console.error('assign by member failed', e);
+    assignByMemberError.textContent = '저장에 실패했어요. 다시 시도해주세요.';
+    assignByMemberError.classList.remove('hidden');
+  }
+});
+
 
 
 /* ---- Name modal ---- */
@@ -1890,6 +2052,7 @@ function updateAdminUI(){
   removeMemberBtn.classList.toggle('hidden', !isAdmin);
   findDuplicatesBtn.classList.toggle('hidden', !isAdmin);
   massAssignBtn.classList.toggle('hidden', !isAdmin);
+  assignByMemberBtn.classList.toggle('hidden', !isAdmin);
 }
 
 adminToggleBtn.addEventListener('click', ()=>{
