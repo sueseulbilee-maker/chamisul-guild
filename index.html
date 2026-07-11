@@ -637,6 +637,7 @@ body{
     <button class="btn btn-primary" id="add-flower-btn" type="button">+ 꽃 종류 추가</button>
     <button class="btn btn-ghost hidden" id="remove-member-btn" type="button">🚪 탈퇴 길드원 삭제</button>
     <button class="btn btn-ghost hidden" id="find-duplicates-btn" type="button">🔍 중복 꽃 확인</button>
+    <button class="btn btn-ghost hidden" id="mass-assign-btn" type="button">📋 전체 일괄 등록</button>
   </div>
 
   <div class="filter-row">
@@ -754,6 +755,25 @@ body{
     <div id="duplicates-list" style="max-height: 320px; overflow-y: auto; margin-bottom: 18px;"></div>
     <div class="modal-actions">
       <button class="btn btn-primary" id="close-duplicates-btn" type="button">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- Mass Assign Modal (admin only) -->
+<div class="overlay hidden" id="mass-assign-overlay">
+  <div class="modal" style="max-width: 520px;">
+    <h3>전체 일괄 등록</h3>
+    <p class="sub">
+      한 줄에 <b>꽃 이름 - 이름1, 이름2, 이름3</b> 형식으로 여러 꽃을 한 번에 입력할 수 있어요.
+      번호(1. 2. 등)가 앞에 붙어있어도 자동으로 무시돼요.
+    </p>
+    <label for="mass-assign-input">일괄 등록 목록</label>
+    <textarea id="mass-assign-input" placeholder="구름 조류 꽃무늬 배 - 양갱, 방울언냐, 쏘매에엑&#10;게자리 물결치는 별무리 - 양갱, 나비에 황후, 다람이" rows="10"></textarea>
+    <div class="error-msg hidden" id="mass-assign-error"></div>
+    <div id="mass-assign-result" style="max-height: 200px; overflow-y:auto; margin-bottom: 14px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="cancel-mass-assign-btn" type="button" style="color:var(--ink-soft); border-color:var(--line);">취소</button>
+      <button class="btn btn-primary" id="save-mass-assign-btn" type="button">일괄 등록하기</button>
     </div>
   </div>
 </div>
@@ -982,6 +1002,7 @@ const grid = document.getElementById('grid');
 const removeMemberBtn = document.getElementById('remove-member-btn');
 const findDuplicatesBtn = document.getElementById('find-duplicates-btn');
 const resyncBtn = document.getElementById('resync-btn');
+const massAssignBtn = document.getElementById('mass-assign-btn');
 const myNameTag = document.getElementById('my-name-tag');
 const gradeTabsEl = document.getElementById('grade-tabs');
 const searchInput = document.getElementById('search-input');
@@ -1705,6 +1726,121 @@ document.getElementById('close-duplicates-btn').addEventListener('click', ()=>{
   duplicatesOverlay.classList.add('hidden');
 });
 
+/* ---- Mass assign collectors across many flowers at once (admin only) ---- */
+const massAssignOverlay = document.getElementById('mass-assign-overlay');
+const massAssignInput = document.getElementById('mass-assign-input');
+const massAssignError = document.getElementById('mass-assign-error');
+const massAssignResult = document.getElementById('mass-assign-result');
+
+massAssignBtn.addEventListener('click', ()=>{
+  if(!isAdmin) return;
+  massAssignInput.value = '';
+  massAssignError.classList.add('hidden');
+  massAssignResult.innerHTML = '';
+  massAssignOverlay.classList.remove('hidden');
+  massAssignInput.focus();
+});
+document.getElementById('cancel-mass-assign-btn').addEventListener('click', ()=>{
+  massAssignOverlay.classList.add('hidden');
+});
+
+function parseMassAssignLine(line){
+  // Strip leading numbering like "1.", "12)", etc.
+  let cleaned = line.replace(/^\s*\d+[.)]\s*/, '').trim();
+  if(!cleaned) return null;
+  // Split on the first " - " (or a bare "-" if no spaced version found)
+  let idx = cleaned.indexOf(' - ');
+  let sepLen = 3;
+  if(idx === -1){
+    idx = cleaned.indexOf('-');
+    sepLen = 1;
+  }
+  if(idx === -1) return null;
+  const flowerName = cleaned.slice(0, idx).trim();
+  const namesStr = cleaned.slice(idx + sepLen).trim();
+  if(!flowerName || !namesStr) return null;
+  const names = [...new Set(
+    namesStr.split(',').map(s=>normName(s)).filter(s=>s.length > 0)
+  )];
+  return { flowerName, names };
+}
+
+document.getElementById('save-mass-assign-btn').addEventListener('click', async ()=>{
+  if(!isAdmin) return;
+  massAssignError.classList.add('hidden');
+  massAssignResult.innerHTML = '';
+
+  const lines = massAssignInput.value.split('\n').map(l=>l.trim()).filter(l=>l.length > 0);
+  if(lines.length === 0){
+    massAssignError.textContent = '내용을 입력해주세요.';
+    massAssignError.classList.remove('hidden');
+    return;
+  }
+
+  const matched = [];
+  const unmatched = [];
+
+  lines.forEach(line=>{
+    const parsed = parseMassAssignLine(line);
+    if(!parsed){
+      unmatched.push({ line, reason: '형식을 이해하지 못했어요 (꽃이름 - 이름1, 이름2 형식인지 확인해주세요)' });
+      return;
+    }
+    const targetKey = looseKey(parsed.flowerName);
+    const f = catalog.find(x => looseKey(x.name) === targetKey);
+    if(!f){
+      unmatched.push({ line, reason: `"${parsed.flowerName}"라는 꽃을 도감에서 찾지 못했어요` });
+      return;
+    }
+    if(parsed.names.length === 0){
+      unmatched.push({ line, reason: '이름 목록이 비어있어요' });
+      return;
+    }
+    matched.push({ flower: f, names: parsed.names });
+  });
+
+  if(matched.length === 0){
+    massAssignError.textContent = '일치하는 꽃을 하나도 찾지 못했어요.';
+    massAssignError.classList.remove('hidden');
+    massAssignResult.innerHTML = unmatched.map(u=>
+      `<div class="dup-group-item" style="color:var(--rose-deep);">❌ ${escapeHtml(u.line)}<br><span style="font-size:11px;">${escapeHtml(u.reason)}</span></div>`
+    ).join('');
+    return;
+  }
+
+  const summaryLines = matched.map(m => `"${m.flower.name}"에 ${m.names.length}명`).join(', ');
+  if(!confirm(`${matched.length}개 꽃에 인원을 등록할까요?\n${summaryLines}`)) return;
+
+  try{
+    const batch = db.batch();
+    matched.forEach(m=>{
+      batch.update(flowersCol.doc(m.flower.id), {
+        collectors: firebase.firestore.FieldValue.arrayUnion(...m.names)
+      });
+    });
+    await batch.commit();
+
+    let resultHtml = matched.map(m =>
+      `<div class="dup-group-item" style="color:var(--sage-deep);">✅ ${escapeHtml(m.flower.name)} — ${m.names.length}명 등록</div>`
+    ).join('');
+    if(unmatched.length > 0){
+      resultHtml += unmatched.map(u=>
+        `<div class="dup-group-item" style="color:var(--rose-deep);">❌ ${escapeHtml(u.line)}<br><span style="font-size:11px;">${escapeHtml(u.reason)}</span></div>`
+      ).join('');
+    }
+    massAssignResult.innerHTML = resultHtml;
+
+    if(unmatched.length === 0){
+      alert(`${matched.length}개 꽃에 등록 완료했어요.`);
+      massAssignOverlay.classList.add('hidden');
+    }
+  }catch(e){
+    console.error('mass assign failed', e);
+    massAssignError.textContent = '저장에 실패했어요. 다시 시도해주세요.';
+    massAssignError.classList.remove('hidden');
+  }
+});
+
 
 
 /* ---- Name modal ---- */
@@ -1753,6 +1889,7 @@ function updateAdminUI(){
   adminToggleBtn.textContent = isAdmin ? '관리자 모드 종료' : '관리자 모드';
   removeMemberBtn.classList.toggle('hidden', !isAdmin);
   findDuplicatesBtn.classList.toggle('hidden', !isAdmin);
+  massAssignBtn.classList.toggle('hidden', !isAdmin);
 }
 
 adminToggleBtn.addEventListener('click', ()=>{
