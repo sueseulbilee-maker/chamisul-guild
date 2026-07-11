@@ -1704,11 +1704,18 @@ document.getElementById('save-bulk-collectors-btn').addEventListener('click', as
     return;
   }
   try{
+    const existing = (ownership[bulkCollectorsFlowerId] || []).map(normName);
+    const newCount = names.filter(n => !existing.includes(normName(n))).length;
+    const dupCount = names.length - newCount;
+
     await flowersCol.doc(bulkCollectorsFlowerId).update({
       collectors: firebase.firestore.FieldValue.arrayUnion(...names)
     });
     bulkCollectorsOverlay.classList.add('hidden');
     bulkCollectorsFlowerId = null;
+    if(dupCount > 0){
+      alert(`신규 ${newCount}명 등록했어요. (이미 등록되어 있던 ${dupCount}명은 건너뛰었어요)`);
+    }
   }catch(e){
     console.error('bulk add collectors failed', e);
     bulkCollectorsError.textContent = '저장에 실패했어요. 다시 시도해주세요.';
@@ -1937,7 +1944,12 @@ document.getElementById('save-mass-assign-btn').addEventListener('click', async 
     return;
   }
 
-  const summaryLines = matched.map(m => `"${m.flower.name}"에 ${m.names.length}명`).join(', ');
+  const summaryLines = matched.map(m => {
+    const existing = (ownership[m.flower.id] || []).map(normName);
+    const newCount = m.names.filter(n => !existing.includes(normName(n))).length;
+    const dupCount = m.names.length - newCount;
+    return `"${m.flower.name}": 신규 ${newCount}명${dupCount > 0 ? `, 이미 등록됨 ${dupCount}명(건너뜀)` : ''}`;
+  }).join('\n');
   if(!confirm(`${matched.length}개 꽃에 인원을 등록할까요?\n${summaryLines}`)) return;
 
   try{
@@ -2052,7 +2064,13 @@ document.getElementById('save-assign-by-member-btn').addEventListener('click', a
     return;
   }
 
-  const summaryLines = updates.map(u => `"${u.flower.name}"에 ${u.members.size}명`).join(', ');
+  const summaryLines = updates.map(u => {
+    const existing = (ownership[u.flower.id] || []).map(normName);
+    const memberList = [...u.members];
+    const newCount = memberList.filter(n => !existing.includes(normName(n))).length;
+    const dupCount = memberList.length - newCount;
+    return `"${u.flower.name}": 신규 ${newCount}명${dupCount > 0 ? `, 이미 등록됨 ${dupCount}명(건너뜀)` : ''}`;
+  }).join('\n');
   if(!confirm(`${updates.length}개 꽃에 인원을 등록할까요?\n${summaryLines}`)) return;
 
   try{
