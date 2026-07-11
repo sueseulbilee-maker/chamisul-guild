@@ -1037,6 +1037,15 @@ function escapeHtml(str){
   return d.innerHTML;
 }
 
+// Korean text can come out of different keyboards/OSes in different Unicode
+// normalization forms (NFC vs NFD) that render pixel-identical but are NOT
+// the same string in JS (different code points). That silently breaks
+// name matching (search, duplicate detection, "same person" checks), so we
+// always normalize to NFC before comparing or storing any name.
+function normName(str){
+  return (str || '').normalize('NFC').trim();
+}
+
 function hash(str){
   let h = 0;
   for(let i=0;i<str.length;i++){ h = (h*31 + str.charCodeAt(i)) | 0; }
@@ -1152,11 +1161,11 @@ function render(){
     const grade = (!f.grade || f.grade === 'N' || f.grade === 'R') ? 'SR' : f.grade;
     const gradeOk = currentGrade === 'ALL' || grade === currentGrade;
     const collectors = ownership[f.id] || [];
-    const term = searchTerm.toLowerCase();
+    const term = normName(searchTerm).toLowerCase();
     const searchOk = !term
-      || f.name.toLowerCase().includes(term)
-      || collectors.some(n => n.toLowerCase().includes(term));
-    const mineOk = !myFlowersOnly || (myName && collectors.includes(myName));
+      || normName(f.name).toLowerCase().includes(term)
+      || collectors.some(n => normName(n).toLowerCase().includes(term));
+    const mineOk = !myFlowersOnly || (myName && collectors.map(normName).includes(normName(myName)));
     return gradeOk && searchOk && mineOk;
   });
 
@@ -1241,7 +1250,7 @@ function ensureName(action){
 async function onClaim(flowerId){
   ensureName(async () => {
     const list = ownership[flowerId] || [];
-    const hasIt = list.includes(myName);
+    const hasIt = list.map(normName).includes(normName(myName));
     try{
       await flowersCol.doc(flowerId).update({
         collectors: hasIt
@@ -1414,13 +1423,13 @@ document.getElementById('cancel-flower-btn').addEventListener('click', ()=>{
   editingFlowerId = null;
 });
 document.getElementById('save-flower-btn').addEventListener('click', async ()=>{
-  const name = flowerNameInput.value.trim();
+  const name = normName(flowerNameInput.value);
   if(!name){
     flowerError.textContent = '꽃 이름을 입력해주세요.';
     flowerError.classList.remove('hidden');
     return;
   }
-  if(catalog.some(f=>f.name === name && f.id !== editingFlowerId)){
+  if(catalog.some(f=>normName(f.name).toLowerCase() === name.toLowerCase() && f.id !== editingFlowerId)){
     flowerError.textContent = '이미 등록된 이름이에요.';
     flowerError.classList.remove('hidden');
     return;
@@ -1523,7 +1532,7 @@ document.getElementById('save-bulk-collectors-btn').addEventListener('click', as
   if(!bulkCollectorsFlowerId) return;
   const raw = bulkCollectorsInput.value;
   const names = [...new Set(
-    raw.split(/[,\n]/).map(s=>s.trim()).filter(s=>s.length > 0)
+    raw.split(/[,\n]/).map(s=>normName(s)).filter(s=>s.length > 0)
   )];
   if(names.length === 0){
     bulkCollectorsError.textContent = '이름을 한 개 이상 입력해주세요.';
@@ -1562,18 +1571,27 @@ document.getElementById('confirm-remove-member-btn').addEventListener('click', a
   if(!isAdmin) return;
   const raw = removeMemberInput.value;
   const namesToRemove = [...new Set(
-    raw.split(/[,\n]/).map(s=>s.trim()).filter(s=>s.length > 0)
+    raw.split(/[,\n]/).map(s=>normName(s)).filter(s=>s.length > 0)
   )];
   if(namesToRemove.length === 0){
     removeMemberError.textContent = '이름을 한 개 이상 입력해주세요.';
     removeMemberError.classList.remove('hidden');
     return;
   }
+  const targetKeys = namesToRemove.map(n => n.toLowerCase());
 
-  // Find every flower where any of these names currently appear.
-  const affected = catalog.filter(f => {
+  // Find every flower where any of these names currently appear, and collect
+  // the ACTUAL stored strings to remove (may differ from the typed name by
+  // Unicode normalization, so we match normalized but remove the real value).
+  const affected = [];
+  const removalsByFlower = {};
+  catalog.forEach(f => {
     const collectors = ownership[f.id] || [];
-    return namesToRemove.some(n => collectors.includes(n));
+    const matches = collectors.filter(c => targetKeys.includes(normName(c).toLowerCase()));
+    if(matches.length > 0){
+      affected.push(f);
+      removalsByFlower[f.id] = matches;
+    }
   });
 
   if(affected.length === 0){
@@ -1589,7 +1607,7 @@ document.getElementById('confirm-remove-member-btn').addEventListener('click', a
     const batch = db.batch();
     affected.forEach(f=>{
       batch.update(flowersCol.doc(f.id), {
-        collectors: firebase.firestore.FieldValue.arrayRemove(...namesToRemove)
+        collectors: firebase.firestore.FieldValue.arrayRemove(...removalsByFlower[f.id])
       });
     });
     await batch.commit();
@@ -1642,7 +1660,7 @@ findDuplicatesBtn.addEventListener('click', ()=>{
   if(!isAdmin) return;
   const groups = {};
   catalog.forEach(f=>{
-    const key = f.name.trim().toLowerCase();
+    const key = normName(f.name).toLowerCase();
     if(!groups[key]) groups[key] = [];
     groups[key].push(f);
   });
@@ -1688,7 +1706,7 @@ document.getElementById('cancel-name-btn').addEventListener('click', ()=>{
   pendingAction = null;
 });
 document.getElementById('save-name-btn').addEventListener('click', async ()=>{
-  const val = nameInput.value.trim();
+  const val = normName(nameInput.value);
   if(!val){
     nameError.textContent = '이름을 입력해주세요.';
     nameError.classList.remove('hidden');
