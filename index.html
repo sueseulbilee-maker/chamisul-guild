@@ -459,6 +459,23 @@ body{
   outline: none;
   border-color: var(--sage);
 }
+.dup-group{
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.dup-group-name{
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+.dup-group-item{
+  font-size: 13px;
+  color: var(--ink-soft);
+  padding: 3px 0;
+}
 .emoji-pick{
   display:grid;
   grid-template-columns: repeat(6, 1fr);
@@ -619,6 +636,7 @@ body{
     </div>
     <button class="btn btn-primary" id="add-flower-btn" type="button">+ 꽃 종류 추가</button>
     <button class="btn btn-ghost hidden" id="remove-member-btn" type="button">🚪 탈퇴 길드원 삭제</button>
+    <button class="btn btn-ghost hidden" id="find-duplicates-btn" type="button">🔍 중복 꽃 확인</button>
   </div>
 
   <div class="filter-row">
@@ -627,6 +645,7 @@ body{
     <div class="search-box">
       <input type="text" id="search-input" placeholder="꽃 이름 또는 길드원 이름으로 검색...">
     </div>
+    <button class="grade-tab" id="resync-btn" type="button" title="최신 데이터를 서버에서 다시 불러와요">🔄 새로고침</button>
   </div>
 
   <div class="grid" id="grid">
@@ -723,6 +742,18 @@ body{
     <div class="modal-actions">
       <button class="btn btn-ghost" id="cancel-remove-member-btn" type="button" style="color:var(--ink-soft); border-color:var(--line);">취소</button>
       <button class="btn btn-primary" id="confirm-remove-member-btn" type="button" style="background: var(--rose-deep); color:white;">삭제하기</button>
+    </div>
+  </div>
+</div>
+
+<!-- Duplicate Flower Report Modal (admin only) -->
+<div class="overlay hidden" id="duplicates-overlay">
+  <div class="modal" style="max-width: 460px;">
+    <h3>중복된 꽃 확인</h3>
+    <p class="sub">이름이 같은 꽃이 여러 개 등록되어 있으면 여기 표시돼요. 목록에서 카드 번호를 확인한 뒤, 도감에서 그 카드를 찾아 필요 없는 쪽을 ✕ 버튼으로 삭제해주세요.</p>
+    <div id="duplicates-list" style="max-height: 320px; overflow-y: auto; margin-bottom: 18px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="close-duplicates-btn" type="button">닫기</button>
     </div>
   </div>
 </div>
@@ -949,6 +980,8 @@ const ADMIN_PASSWORD = '1234';
 
 const grid = document.getElementById('grid');
 const removeMemberBtn = document.getElementById('remove-member-btn');
+const findDuplicatesBtn = document.getElementById('find-duplicates-btn');
+const resyncBtn = document.getElementById('resync-btn');
 const myNameTag = document.getElementById('my-name-tag');
 const gradeTabsEl = document.getElementById('grade-tabs');
 const searchInput = document.getElementById('search-input');
@@ -1569,6 +1602,70 @@ document.getElementById('confirm-remove-member-btn').addEventListener('click', a
   }
 });
 
+/* ---- Manual force resync (bypasses any stale cache/listener) ---- */
+resyncBtn.addEventListener('click', async ()=>{
+  resyncBtn.disabled = true;
+  const originalText = resyncBtn.textContent;
+  resyncBtn.textContent = '⏳ 불러오는 중...';
+  try{
+    const snap = await flowersCol.get({ source: 'server' });
+    const newCatalog = [];
+    const newOwnership = {};
+    snap.forEach(doc=>{
+      const data = doc.data();
+      newCatalog.push({
+        id: doc.id,
+        name: data.name,
+        grade: data.grade,
+        emoji: data.emoji,
+        photo: data.photo || null
+      });
+      newOwnership[doc.id] = data.collectors || [];
+    });
+    catalog = newCatalog;
+    ownership = newOwnership;
+    render();
+  }catch(e){
+    console.error('force resync failed', e);
+    alert('새로고침에 실패했어요. 인터넷 연결을 확인하고 다시 시도해주세요.');
+  }finally{
+    resyncBtn.disabled = false;
+    resyncBtn.textContent = originalText;
+  }
+});
+
+/* ---- Duplicate flower finder (admin only) ---- */
+const duplicatesOverlay = document.getElementById('duplicates-overlay');
+const duplicatesList = document.getElementById('duplicates-list');
+
+findDuplicatesBtn.addEventListener('click', ()=>{
+  if(!isAdmin) return;
+  const groups = {};
+  catalog.forEach(f=>{
+    const key = f.name.trim().toLowerCase();
+    if(!groups[key]) groups[key] = [];
+    groups[key].push(f);
+  });
+  const dupGroups = Object.values(groups).filter(g => g.length > 1);
+
+  if(dupGroups.length === 0){
+    duplicatesList.innerHTML = '<p style="color:var(--ink-soft); font-size:14px;">중복된 꽃이 없어요. 👍</p>';
+  }else{
+    duplicatesList.innerHTML = dupGroups.map(group=>{
+      const items = group.map(f=>{
+        const no = String(catalog.indexOf(f)+1).padStart(3,'0');
+        const count = (ownership[f.id] || []).length;
+        return `<div class="dup-group-item">No. ${no} · ${f.grade || 'SR'}등급 · 수집 ${count}명 ${f.photo ? '· 사진 있음' : ''}</div>`;
+      }).join('');
+      return `<div class="dup-group"><div class="dup-group-name">${escapeHtml(group[0].name)} (${group.length}개)</div>${items}</div>`;
+    }).join('');
+  }
+  duplicatesOverlay.classList.remove('hidden');
+});
+document.getElementById('close-duplicates-btn').addEventListener('click', ()=>{
+  duplicatesOverlay.classList.add('hidden');
+});
+
 
 
 /* ---- Name modal ---- */
@@ -1616,6 +1713,7 @@ function updateAdminUI(){
   adminStatusEl.classList.toggle('hidden', !isAdmin);
   adminToggleBtn.textContent = isAdmin ? '관리자 모드 종료' : '관리자 모드';
   removeMemberBtn.classList.toggle('hidden', !isAdmin);
+  findDuplicatesBtn.classList.toggle('hidden', !isAdmin);
 }
 
 adminToggleBtn.addEventListener('click', ()=>{
