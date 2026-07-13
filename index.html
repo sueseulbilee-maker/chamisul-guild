@@ -653,6 +653,7 @@ body{
     <button class="btn btn-ghost hidden" id="find-duplicates-btn" type="button">🔍 중복 꽃 확인</button>
     <button class="btn btn-ghost hidden" id="mass-assign-btn" type="button">📋 전체 일괄 등록</button>
     <button class="btn btn-ghost hidden" id="assign-by-member-btn" type="button">🙋 한 명당 여러 꽃 등록</button>
+    <button class="btn btn-ghost hidden" id="rename-member-btn" type="button">✏️ 길드원 이름 변경</button>
   </div>
 
   <div class="filter-row">
@@ -818,6 +819,24 @@ body{
     <div id="full-roster-list" class="collectors" style="max-height: 360px; overflow-y: auto; margin-bottom: 18px;"></div>
     <div class="modal-actions">
       <button class="btn btn-primary" id="close-full-roster-btn" type="button">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rename Member Modal (admin only) -->
+<div class="overlay hidden" id="rename-member-overlay">
+  <div class="modal">
+    <h3>길드원 이름 변경</h3>
+    <p class="sub">기존 이름이 등록되어 있는 <b>모든 꽃</b>에서 한 번에 이름을 바꿔줘요. 수집 기록은 그대로 유지돼요.</p>
+    <label for="rename-old-input">기존 이름</label>
+    <input type="text" id="rename-old-input" placeholder="예: 우유누나" maxlength="20">
+    <label for="rename-new-input">새 이름</label>
+    <input type="text" id="rename-new-input" placeholder="예: 우유언니" maxlength="20">
+    <div class="error-msg hidden" id="rename-member-error"></div>
+    <div id="rename-member-result" style="max-height: 200px; overflow-y:auto; margin-bottom: 14px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="cancel-rename-member-btn" type="button" style="color:var(--ink-soft); border-color:var(--line);">취소</button>
+      <button class="btn btn-primary" id="confirm-rename-member-btn" type="button">변경하기</button>
     </div>
   </div>
 </div>
@@ -1050,6 +1069,7 @@ const findDuplicatesBtn = document.getElementById('find-duplicates-btn');
 const resyncBtn = document.getElementById('resync-btn');
 const massAssignBtn = document.getElementById('mass-assign-btn');
 const assignByMemberBtn = document.getElementById('assign-by-member-btn');
+const renameMemberBtn = document.getElementById('rename-member-btn');
 const myNameTag = document.getElementById('my-name-tag');
 const gradeTabsEl = document.getElementById('grade-tabs');
 const searchInput = document.getElementById('search-input');
@@ -1791,6 +1811,75 @@ document.getElementById('confirm-remove-member-btn').addEventListener('click', a
   }
 });
 
+/* ---- Rename a guild member across every flower (admin only) ---- */
+const renameMemberOverlay = document.getElementById('rename-member-overlay');
+const renameOldInput = document.getElementById('rename-old-input');
+const renameNewInput = document.getElementById('rename-new-input');
+const renameMemberError = document.getElementById('rename-member-error');
+const renameMemberResult = document.getElementById('rename-member-result');
+
+renameMemberBtn.addEventListener('click', ()=>{
+  if(!isAdmin) return;
+  renameOldInput.value = '';
+  renameNewInput.value = '';
+  renameMemberError.classList.add('hidden');
+  renameMemberResult.innerHTML = '';
+  renameMemberOverlay.classList.remove('hidden');
+  renameOldInput.focus();
+});
+document.getElementById('cancel-rename-member-btn').addEventListener('click', ()=>{
+  renameMemberOverlay.classList.add('hidden');
+});
+document.getElementById('confirm-rename-member-btn').addEventListener('click', async ()=>{
+  if(!isAdmin) return;
+  renameMemberError.classList.add('hidden');
+  renameMemberResult.innerHTML = '';
+
+  const oldName = normName(renameOldInput.value);
+  const newName = normName(renameNewInput.value);
+
+  if(!oldName || !newName){
+    renameMemberError.textContent = '기존 이름과 새 이름을 모두 입력해주세요.';
+    renameMemberError.classList.remove('hidden');
+    return;
+  }
+  if(normName(oldName).toLowerCase() === normName(newName).toLowerCase()){
+    renameMemberError.textContent = '기존 이름과 새 이름이 같아요.';
+    renameMemberError.classList.remove('hidden');
+    return;
+  }
+
+  const oldKey = oldName.toLowerCase();
+  const affected = catalog.filter(f => (ownership[f.id] || []).some(n => normName(n).toLowerCase() === oldKey));
+
+  if(affected.length === 0){
+    renameMemberError.textContent = `"${oldName}" 님이 등록된 꽃을 찾지 못했어요.`;
+    renameMemberError.classList.remove('hidden');
+    return;
+  }
+
+  if(!confirm(`"${oldName}" → "${newName}"(으)로 ${affected.length}개 꽃에서 이름을 바꿀까요?`)) return;
+
+  try{
+    const batch = db.batch();
+    affected.forEach(f=>{
+      const current = ownership[f.id] || [];
+      const updated = [...new Set(
+        current.map(n => normName(n).toLowerCase() === oldKey ? newName : n)
+      )];
+      batch.update(flowersCol.doc(f.id), { collectors: updated });
+    });
+    await batch.commit();
+    renameMemberResult.innerHTML = `<div class="dup-group-item" style="color:var(--sage-deep);">✅ ${affected.length}개 꽃에서 "${escapeHtml(oldName)}" → "${escapeHtml(newName)}"(으)로 변경했어요.</div>`;
+    alert(`${affected.length}개 꽃에서 이름을 변경했어요.`);
+    renameMemberOverlay.classList.add('hidden');
+  }catch(e){
+    console.error('rename member failed', e);
+    renameMemberError.textContent = '변경에 실패했어요. 다시 시도해주세요.';
+    renameMemberError.classList.remove('hidden');
+  }
+});
+
 /* ---- Manual force resync (bypasses any stale cache/listener) ---- */
 resyncBtn.addEventListener('click', async ()=>{
   resyncBtn.disabled = true;
@@ -2153,6 +2242,7 @@ function updateAdminUI(){
   findDuplicatesBtn.classList.toggle('hidden', !isAdmin);
   massAssignBtn.classList.toggle('hidden', !isAdmin);
   assignByMemberBtn.classList.toggle('hidden', !isAdmin);
+  renameMemberBtn.classList.toggle('hidden', !isAdmin);
 }
 
 adminToggleBtn.addEventListener('click', ()=>{
